@@ -63,6 +63,27 @@ class FieldProcessor {
   }
 
   /**
+   * Return fields that match the given field names.
+   *
+   * @param array $field_names
+   *   The name(s) of fields to find.
+   *
+   * @return array
+   *   Array with key => value being field name => field info.
+   */
+  public static function getFieldsByName(array $field_names) {
+    $matched_fields = [];
+    foreach ($field_names as $field_name) {
+      $field_info = field_info_field($field_name);
+      if (!empty($field_info)) {
+        $matched_fields[$field_name] = $field_info;
+      }
+    }
+
+    return $matched_fields;
+  }
+
+  /**
    * Find tables associated with a field type.
    *
    * @param array $types
@@ -73,10 +94,44 @@ class FieldProcessor {
    * @return array
    *   Array of tables associated with the field types.
    */
-  public static function getFieldTables(array $types = [], $revision_tables = TRUE) {
-    $tables = [];
+  public static function getFieldTablesForTypes(array $types = [], $revision_tables = TRUE) {
     $table_types = $revision_tables ? [FIELD_LOAD_CURRENT, FIELD_LOAD_REVISION] : [FIELD_LOAD_CURRENT];
     $fields_info = self::getFieldsOfType($types);
+
+    return self::extractValueColumns($fields_info, $table_types);
+  }
+
+  /**
+   * Find tables associated with a named fields.
+   *
+   * @param array $field_names
+   *   Field names.
+   * @param bool $revision_tables
+   *   Include the revision tables.
+   *
+   * @return array
+   *   Array of tables associated with the named fields.
+   */
+  public static function getFieldTablesForFields(array $field_names = [], $revision_tables = TRUE) {
+    $table_types = $revision_tables ? [FIELD_LOAD_CURRENT, FIELD_LOAD_REVISION] : [FIELD_LOAD_CURRENT];
+    $fields_info = self::getFieldsByName($field_names);
+
+    return self::extractValueColumns($fields_info, $table_types);
+  }
+
+  /**
+   * Get available value columns for requested field tables.
+   *
+   * @param array $fields_info
+   *   Array of field_info results.
+   * @param array $table_types
+   *   Current or current and revisions.
+   *
+   * @return array
+   *   Array of matching tables and the value columns.
+   */
+  public static function extractValueColumns(array $fields_info, array $table_types) {
+    $tables = [];
     foreach ($fields_info as $field_info) {
       foreach ($table_types as $table_type) {
         foreach ($field_info['storage']['details']['sql'][$table_type] as $table_name => $columns) {
@@ -88,7 +143,6 @@ class FieldProcessor {
         }
       }
     }
-
     return $tables;
   }
 
@@ -120,7 +174,41 @@ class FieldProcessor {
         'text_with_summary',
       ];
     }
-    $tables = self::getFieldTables($types, $revision_tables);
+    $tables = self::getFieldTablesForTypes($types, $revision_tables);
+
+    foreach ($tables as $table_name => $columns) {
+      if (self::$verbose) {
+        self::printMessage("Processing table: $table_name");
+      }
+      self::processTable($table_name, $columns, $search_pattern, $callback, $process_fields, $exact_match);
+    }
+  }
+
+  /**
+   * The core of this class. Run a callback on all matching fields.
+   *
+   * For field level processing ($process_fields = TRUE) the signature should
+   * match function(string $text, object $row). For row level processing, the
+   * signature should be function(string $text, object $row, string $table).
+   *
+   * @param callable $callback
+   *   The callback function to run.
+   * @param array $fields
+   *   The field names to process on.
+   * @param array $search_pattern
+   *   Patterns to match field content against. e.g. ['href=', '[uniquetoken]'].
+   * @param bool $revision_tables
+   *   Include revision tables.
+   * @param bool $process_fields
+   *   Run callback on field data, if FALSE, run only against the row.
+   * @param bool $exact_match
+   *   Use LIKE '%pattern%' if TRUE, otherwise ='pattern'.
+   */
+  public static function processByFieldName(callable $callback, array $fields = [], array $search_pattern = [], $revision_tables = TRUE, $process_fields = TRUE, $exact_match = FALSE) {
+    if (empty($fields)) {
+      return;
+    }
+    $tables = self::getFieldTablesForFields($fields, $revision_tables);
 
     foreach ($tables as $table_name => $columns) {
       if (self::$verbose) {
@@ -274,5 +362,4 @@ class FieldProcessor {
       }
     }
   }
-
 }
